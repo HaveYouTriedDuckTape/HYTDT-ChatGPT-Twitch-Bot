@@ -5,30 +5,26 @@ using System.Text;
 using Newtonsoft.Json;
 using System.Text.RegularExpressions;
 using System.Collections.Generic;
+using Streamer.bot.Common.Events;
 
 public class CPHInline
 {
-    /// <summary>
-    /// Main method to process chat messages with ChatGPT and respond accordingly.
-    /// </summary>
     public bool Execute()
     {
-        // Retrieve arguments passed to the function
+        // Main logic to process ChatGPT responses for general input
         CPH.TryGetArg<string>("rawInput", out string messageInput);
         CPH.TryGetArg<string>("userName", out string user);
         CPH.TryGetArg<string>("userType", out string userType);
         CPH.TryGetArg<string>("msgId", out string msgId);
 
-        // Fetch required global variables
         string apiKey = CPH.GetGlobalVar<string>("chatGptApiKey", true);
         string gptModel = CPH.GetGlobalVar<string>("chatGptModel", true);
         string gptBehaviorGlobal = CPH.GetGlobalVar<string>("chatGptBehavior", true);
-        string gptBehaviorAddon = "Beschränken Sie die maximale Länge der Antworten strikt auf weniger als 975 Zeichen. Vermeiden Sie komplexe Erklärungen. Konzentrieren Sie sich auf eine sachliche, professionelle, direkte und klare Antwort.";
+
+        string gptBehaviorAddon = "Keep responses under 975 characters, avoid complex explanations, and ensure responses are professional and concise.";
         string gptBehavior = gptBehaviorGlobal + gptBehaviorAddon;
+        double gptTempValue = 1.0;
 
-        double gptTemperature = 1.0;
-
-        // Check if user is in the exclusion list
         List<string> exclusionList = CPH.GetGlobalVar<List<string>>("chatGptExclusions", true);
         if (exclusionList != null && exclusionList.Contains(user))
         {
@@ -36,18 +32,14 @@ public class CPHInline
             return false;
         }
 
-        // Default message if no input is provided
-        if (string.IsNullOrWhiteSpace(messageInput))
-        {
-            messageInput = "Please share a witty comment about interrupting without a proper question.";
-        }
+        messageInput = messageInput?.Replace("\"", "\\\"") ?? "Provide a witty response for an unexpected interruption.";
 
-        // Process the input and get a response from ChatGPT
         ChatGptApiRequest chatGpt = new ChatGptApiRequest(apiKey);
         string response;
+
         try
         {
-            response = chatGpt.GenerateResponse(messageInput, gptModel, gptBehavior, gptTemperature);
+            response = chatGpt.GenerateResponse(messageInput, gptModel, gptBehavior, gptTempValue.ToString());
         }
         catch (Exception ex)
         {
@@ -55,120 +47,241 @@ public class CPHInline
             return false;
         }
 
-        // Deserialize and clean the response
         Root root = JsonConvert.DeserializeObject<Root>(response);
-        string rawResponse = root.choices[0].message.content;
-        string cleanedResponse = CleanResponse(rawResponse);
+        string finalGpt = CleanResponse(root.choices[0].message.content);
 
-        // Save response as global variable and argument
-        CPH.SetGlobalVar("_chatGptResponse", cleanedResponse, false);
-        CPH.SetArgument("finalGpt", cleanedResponse);
+        CPH.SetGlobalVar("_chatGptResponse", finalGpt, false);
+        CPH.SetArgument("finalGpt", finalGpt);
 
-        // Send response to the correct platform
-        SendMessageToPlatform(userType, user, cleanedResponse, msgId);
+        SendMessageToPlatform(userType, user, finalGpt, msgId);
         return true;
     }
 
-    /// <summary>
-    /// Cleans up the ChatGPT response by removing unnecessary whitespace and escaping sequences.
-    /// </summary>
-    private string CleanResponse(string response)
+    public bool ChatGptShoutouts()
     {
-        string result = Regex.Replace(response, @"[\r\n]+", " ");
-        result = Regex.Unescape(result).Trim();
-        return result;
+        // Logic for creating Twitch shoutout messages
+        string targetUser = args["targetUser"].ToString();
+        string targetDescription = args["targetDescription"].ToString();
+        string targetGame = args["game"].ToString();
+        string targetTags = args["tagsDelimited"].ToString();
+        string userType = args["userType"].ToString();
+        string targetLink = $"https://twitch.tv/{targetUser}";
+
+        string prompt = $"Create a witty shoutout for @{targetUser} encouraging viewers to watch their stream. The response should include {targetUser} and {targetLink}, but no hashtags.";
+        string apiKey = CPH.GetGlobalVar<string>("chatGptApiKey", true);
+        string gptModel = CPH.GetGlobalVar<string>("chatGptModel", true);
+        string gptBehavior = CPH.GetGlobalVar<string>("chatGptBehavior", true) + $" Include details: {targetUser}, {targetDescription}, {targetGame}, {targetTags}.";
+
+        ChatGptApiRequest chatGpt = new ChatGptApiRequest(apiKey);
+        string response;
+
+        try
+        {
+            response = chatGpt.GenerateResponse(prompt, gptModel, gptBehavior, "1");
+        }
+        catch (Exception ex)
+        {
+            CPH.LogError($"ChatGPT ERROR: {ex.Message}");
+            return false;
+        }
+
+        Root root = JsonConvert.DeserializeObject<Root>(response);
+        string finalGpt = CleanResponse(root.choices[0].message.content);
+
+        SendMessageToPlatform(userType, targetUser, finalGpt, null);
+        return true;
     }
 
-    /// <summary>
-    /// Sends a message to the appropriate platform based on user type.
-    /// </summary>
+    public bool ChatGptGreetings()
+    {
+        // Sends a personalized greeting to new users in the chat
+        string user = args["user"].ToString();
+        string broadcastUser = args["broadcastUser"].ToString();
+        string targetDescription = args["targetDescription"].ToString();
+        string targetGame = args["game"].ToString();
+        string actionQueuedAt = args["actionQueuedAt"].ToString();
+        string userType = args["userType"].ToString();
+
+        string prompt = $"Welcome the new chatter '{user}' to the stream. The message should introduce the bot as 'DuckTapeBot' and be under 320 characters.";
+        string apiKey = CPH.GetGlobalVar<string>("chatGptApiKey", true);
+        string gptModel = CPH.GetGlobalVar<string>("chatGptModel", true);
+        string gptBehavior = CPH.GetGlobalVar<string>("chatGptBehavior", true) +
+            $" Include details: {broadcastUser}, {targetDescription}, {targetGame}, and the time '{actionQueuedAt}'.";
+
+        ChatGptApiRequest chatGpt = new ChatGptApiRequest(apiKey);
+        string response;
+
+        try
+        {
+            response = chatGpt.GenerateResponse(prompt, gptModel, gptBehavior, "1");
+        }
+        catch (Exception ex)
+        {
+            CPH.LogError($"ChatGPT ERROR: {ex.Message}");
+            return false;
+        }
+
+        Root root = JsonConvert.DeserializeObject<Root>(response);
+        string finalGpt = CleanResponse(root.choices[0].message.content);
+
+        SendMessageToPlatform(userType, user, finalGpt, null);
+        return true;
+    }
+
+    public bool ChatGptFirstMessage()
+    {
+        // Welcomes a viewer posting their first message in chat
+        string user = args["user"].ToString();
+        string broadcastUser = args["broadcastUser"].ToString();
+        string broadcasterGame = args["broadcaster_game"].ToString();
+        string actionQueuedAt = args["actionQueuedAt"].ToString();
+        string targetPreviousActive = args["targetPreviousActive"].ToString();
+        string userType = args["userType"].ToString();
+
+        string prompt = $"Welcome {user} for their first chat message. Keep the response under 200 characters.";
+        string apiKey = CPH.GetGlobalVar<string>("chatGptApiKey", true);
+        string gptModel = CPH.GetGlobalVar<string>("chatGptModel", true);
+        string gptBehavior = CPH.GetGlobalVar<string>("chatGptBehavior", true) +
+            $" Include details: '{broadcastUser}', '{broadcasterGame}', and last active '{targetPreviousActive}'.";
+
+        ChatGptApiRequest chatGpt = new ChatGptApiRequest(apiKey);
+        string response;
+
+        try
+        {
+            response = chatGpt.GenerateResponse(prompt, gptModel, gptBehavior, "1");
+        }
+        catch (Exception ex)
+        {
+            CPH.LogError($"ChatGPT ERROR: {ex.Message}");
+            return false;
+        }
+
+        Root root = JsonConvert.DeserializeObject<Root>(response);
+        string finalGpt = CleanResponse(root.choices[0].message.content);
+
+        SendMessageToPlatform(userType, user, finalGpt, null);
+        return true;
+    }
+
+    public bool ChatGptTimerTrigger()
+    {
+        // Periodically triggered action
+        string rawInput = CPH.GetGlobalVar<string>("ChatGPT_rawInput_save", true);
+        string user = CPH.GetGlobalVar<string>("ChatGPT_user_save", true);
+        string broadcastUser = args["broadcastUser"].ToString();
+        string broadcasterGame = args["broadcaster_game"].ToString();
+        string actionQueuedAt = args["actionQueuedAt"].ToString();
+        string userType = "twitch"; // Default to Twitch
+
+        string prompt = $"Write a fun response to the chat message from '{user}': '{rawInput}'.";
+        string apiKey = CPH.GetGlobalVar<string>("chatGptApiKey", true);
+        string gptModel = CPH.GetGlobalVar<string>("chatGptModel", true);
+        string gptBehavior = CPH.GetGlobalVar<string>("chatGptBehavior", true) +
+            $" Include details: '{broadcastUser}', '{broadcasterGame}', and the current time '{actionQueuedAt}'.";
+
+        ChatGptApiRequest chatGpt = new ChatGptApiRequest(apiKey);
+        string response;
+
+        try
+        {
+            response = chatGpt.GenerateResponse(prompt, gptModel, gptBehavior, "1");
+        }
+        catch (Exception ex)
+        {
+            CPH.LogError($"ChatGPT ERROR: {ex.Message}");
+            return false;
+        }
+
+        Root root = JsonConvert.DeserializeObject<Root>(response);
+        string finalGpt = CleanResponse(root.choices[0].message.content);
+
+        CPH.TwitchReplyToMessage(finalGpt, CPH.GetGlobalVar<string>("ChatGPT_msgId_save", true), true);
+        return true;
+    }
+
     private void SendMessageToPlatform(string userType, string user, string message, string msgId)
     {
-        switch (userType)
+        // Handles platform-specific message sending logic
+        int maxLength = 473; // Max length for platforms
+        for (int i = 0; i < message.Length; i += maxLength)
         {
-            case "twitch":
-                SendTwitchMessage(user, message, msgId);
-                break;
-            case "youtube":
-                CPH.SendYouTubeMessage($"@{user} {message}", true);
-                break;
-            case "trovo":
-                CPH.SendTrovoMessage($"@{user} {message}", true);
-                break;
-            default:
-                CPH.LogError("Unsupported platform user type.");
-                break;
+            string messagePart = message.Substring(i, Math.Min(maxLength, message.Length - i));
+            if (userType == "twitch")
+            {
+                if (!string.IsNullOrEmpty(msgId))
+                {
+                    CPH.TwitchReplyToMessage($"@{user} {messagePart}", msgId, true);
+                }
+                else
+                {
+                    CPH.SendMessage(messagePart, true);
+                }
+            }
+            else if (userType == "youtube")
+            {
+                CPH.SendYouTubeMessage($"@{user} {messagePart}", true);
+            }
+            else if (userType == "trovo")
+            {
+                CPH.SendTrovoMessage($"@{user} {messagePart}", true);
+            }
+            CPH.Wait(250); // Delay to avoid spam
         }
     }
 
-    /// <summary>
-    /// Handles Twitch message splitting and sending.
-    /// </summary>
-    private void SendTwitchMessage(string user, string message, string msgId)
+    private string CleanResponse(string response)
     {
-        int maxLength = 473;
-        for (int i = 0; i < message.Length; i += maxLength)
-        {
-            string part = message.Substring(i, Math.Min(maxLength, message.Length - i));
-            if (!string.IsNullOrEmpty(msgId))
-            {
-                CPH.TwitchReplyToMessage($"@{user} {part}", msgId, true);
-            }
-            else
-            {
-                CPH.SendMessage(part, true);
-            }
-            CPH.Wait(250); // Prevent rate-limiting
-        }
+        // Cleans up ChatGPT response strings
+        string cleaned = Regex.Replace(response, @"\r\n?|\n", " ");
+        cleaned = Regex.Replace(cleaned, @"[\r\n]+", " ");
+        return Regex.Unescape(cleaned).Trim();
     }
 }
 
-/// <summary>
-/// Handles ChatGPT API requests.
-/// </summary>
 class ChatGptApiRequest
 {
     private readonly string _apiKey;
-    private const string Endpoint = "https://api.openai.com/v1/chat/completions";
+    private const string _endpoint = "https://api.openai.com/v1/chat/completions";
 
-    public ChatGptApiRequest(string apiKey)
+    public ChatGptApiRequest(string apiKey) => _apiKey = apiKey;
+
+    public string GenerateResponse(string prompt, string gptModel, string content, string gptTempValue)
     {
-        _apiKey = apiKey;
-    }
-
-    public string GenerateResponse(string prompt, string model, string behavior, double temperature)
-    {
-        string requestBody = JsonConvert.SerializeObject(new
-        {
-            model,
-            max_tokens = 250,
-            temperature,
-            messages = new[]
-            {
-                new { role = "system", content = behavior },
-                new { role = "user", content = prompt }
-            }
-        });
-
-        HttpWebRequest request = (HttpWebRequest)WebRequest.Create(Endpoint);
+        HttpWebRequest request = (HttpWebRequest)WebRequest.Create(_endpoint);
         request.Headers.Add("Authorization", "Bearer " + _apiKey);
         request.ContentType = "application/json";
         request.Method = "POST";
 
-        using (StreamWriter writer = new StreamWriter(request.GetRequestStream()))
+        string requestBody = JsonConvert.SerializeObject(new
         {
-            writer.Write(requestBody);
+            model = gptModel,
+            max_tokens = 250,
+            temperature = gptTempValue,
+            messages = new[]
+            {
+                new { role = "system", content },
+                new { role = "user", content = prompt }
+            }
+        });
+
+        byte[] bytes = Encoding.UTF8.GetBytes(requestBody);
+        request.ContentLength = bytes.Length;
+
+        using (Stream requestStream = request.GetRequestStream())
+        {
+            requestStream.Write(bytes, 0, bytes.Length);
         }
 
         using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-        using (StreamReader reader = new StreamReader(response.GetResponseStream()))
+        using (Stream responseStream = response.GetResponseStream())
+        using (StreamReader reader = new StreamReader(responseStream, Encoding.UTF8))
         {
             return reader.ReadToEnd();
         }
     }
 }
 
-// Models for deserializing the API response
 public class Root
 {
     public List<Choice> choices { get; set; }
@@ -181,6 +294,5 @@ public class Choice
 
 public class Message
 {
-    public string role { get; set; }
     public string content { get; set; }
 }
