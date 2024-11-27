@@ -13,6 +13,12 @@ public class CPHInline
 {
     public bool Execute()
     {
+        CPH.TryGetArg<string>("rawInput", out string messageInput);
+        CPH.TryGetArg<string>("userName", out string user);
+        CPH.TryGetArg<string>("userType", out string userType);
+        CPH.TryGetArg<string>("msgId", out string msgId);
+        
+        
         string apiKey = CPH.GetGlobalVar<string>("chatGptApiKey", true);
         string gptModel = CPH.GetGlobalVar<string>("chatGptModel", true);
         string gptBehaviorGlobal = CPH.GetGlobalVar<string>("chatGptBehavior", true);
@@ -24,8 +30,8 @@ public class CPHInline
         string gptBehavior = gptBehaviorGlobal + gptBehaviorAddon;
         string gptTemperature = "1";
         double gptTempValue = Convert.ToDouble(gptTemperature);
-        string messageInput = args["rawInput"].ToString();
-        string user = args["userName"].ToString();
+        //string messageInput = args["rawInput"].ToString();
+        //string user = args["userName"].ToString();
         List<string> exclusionList = CPH.GetGlobalVar<List<string>>("chatGptExclusions", true);
         if (exclusionList != null && exclusionList.Contains(user))
         {
@@ -61,10 +67,10 @@ public class CPHInline
         string finalGpt = unescapedString.Trim();
         CPH.SetGlobalVar("_chatGptResponse", finalGpt, false);
         CPH.SetArgument("finalGpt", finalGpt);
-        string userType = args["userType"].ToString();
+        //string userType = args["userType"].ToString();
         if (userType == "twitch")
         {
-        	string msgId = args["msgId"].ToString();
+        	//string msgId = args["msgId"].ToString();
             string message = finalGpt;
             int maxLength = 473;
             int totalLength = message.Length;
@@ -79,13 +85,25 @@ public class CPHInline
                 if (firstMSG == 1)
                 {
                     firstMSG = 0;
-                    //CPH.SendMessage($"@{user} {messagePart}", true);
-                    CPH.TwitchReplyToMessage($"@{user} {messagePart}", msgId, true);
+                    if (!string.IsNullOrEmpty(msgId))
+                    {
+                        CPH.TwitchReplyToMessage($"@{user} {messagePart}", msgId, true);
+                    }
+                    else
+                    {
+                        CPH.SendMessage(messagePart, true);
+                    }
                 }
                 else
                 {
-                    //CPH.SendMessage(messagePart, true);
-                    CPH.TwitchReplyToMessage($"{messagePart}", msgId, true);
+                    if (!string.IsNullOrEmpty(msgId))
+                    {
+                        CPH.TwitchReplyToMessage($"@{user} {messagePart}", msgId, true);
+                    }
+                    else
+                    {
+                        CPH.SendMessage(messagePart, true);
+                    }
                 }
 
                 CPH.LogInfo("Sent SO message to Twitch");
